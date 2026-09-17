@@ -91,6 +91,8 @@ shortcuts. It refuses to overwrite existing files with the same names.
 - **Voice:** optional; configure an external adapter as described in the
   [voice notes](docs/voice.md) (Chinese). You can also use an independent Fcitx
   voice addon alongside this keyboard bridge.
+  Optional Right Alt shortcuts support hold-to-talk and Right Alt+Space for
+  hands-free recording; enable them in the Doubao dictation addon configuration.
 
 Without systemd user services, start `doubao-keyboard` using your own session
 manager. Stop a manually managed engine before applying settings, then restart

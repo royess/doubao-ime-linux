@@ -28,10 +28,13 @@ class Bridge:
             raise RuntimeError('Doubao voice is already running')
         self.phase, self.token, self.session, self.last = 'idle', None, None, None
         self.generation, self.since = 0, time.monotonic()
+        self.hold_generation = None
         self.loop = GLib.MainLoop()
         self.bus.register_object(PATH, Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0], self.method)
         self.bus.signal_subscribe('org.fcitx.Fcitx5', FCITX_IFACE, 'Invalidated', FCITX_PATH,
             None, Gio.DBusSignalFlags.NONE, self.invalidated)
+        self.bus.signal_subscribe('org.fcitx.Fcitx5', FCITX_IFACE, 'Shortcut', FCITX_PATH,
+            None, Gio.DBusSignalFlags.NONE, self.shortcut)
         GLib.timeout_add(250, self.tick)
 
     def notify(self, text):
@@ -58,17 +61,38 @@ class Bridge:
             invocation.return_dbus_error(NAME+'.Error', str(error))
             self.notify(str(error))
 
-    def command(self, command):
+    def shortcut(self, connection, sender, path, interface, signal_name, parameters):
+        action, context = parameters.unpack()
+        try:
+            if action == 'hold-start' and self.phase == 'idle':
+                self.command('start', context)
+                self.hold_generation = self.generation
+            elif action in ('hold-stop', 'hold-cancel'):
+                if self.hold_generation == self.generation:
+                    self.hold_generation = None
+                    self.command('stop' if action == 'hold-stop' else 'cancel')
+            elif action == 'toggle':
+                if self.hold_generation == self.generation and self.phase in ('connecting', 'recording'):
+                    # Space while holding Alt changes this recording to hands-free.
+                    self.hold_generation = None
+                    self.notify('持续录音中；右 Alt + 空格结束，Esc 取消')
+                else:
+                    self.command('start' if self.phase == 'idle' else 'stop', context)
+        except (GLib.Error, RuntimeError) as error:
+            self.notify(str(error))
+
+    def command(self, command, context=None):
         if command == 'toggle':
             command = 'start' if self.phase == 'idle' else 'stop'
         if command == 'start':
             if self.phase != 'idle':
                 raise RuntimeError('当前听写尚未结束')
-            token = self.fcitx('Begin')
+            token = self.fcitx('BeginForContext', context) if context else self.fcitx('Begin')
             if not token:
                 raise RuntimeError('请先聚焦支持 Fcitx 的普通文本输入框')
             self.token = token
             self.generation += 1
+            self.hold_generation = None
             generation = self.generation
             self.phase, self.since = 'connecting', time.monotonic()
             self.session = Session(lambda kind, payload: GLib.idle_add(self.event, generation, kind, payload),
@@ -76,9 +100,7 @@ class Bridge:
             self.session.start()
             self.notify('正在连接…')
         elif command == 'stop':
-            if self.phase == 'connecting':
-                self.cancel('stopped-before-recording')
-            elif self.phase == 'recording':
+            if self.phase in ('connecting', 'recording'):
                 self.phase, self.since = 'processing', time.monotonic()
                 self.session.stop.set()
                 self.notify('正在识别…')
@@ -88,6 +110,7 @@ class Bridge:
             raise ValueError('Unknown command')
 
     def cancel(self, reason):
+        self.hold_generation = None
         if not self.session:
             return
         token, self.token = self.token, None
@@ -110,7 +133,9 @@ class Bridge:
             return False
         if kind == 'recording' and self.phase == 'connecting':
             self.phase, self.since = 'recording', time.monotonic()
-            self.notify('可以说话了，再按快捷键结束；Esc 取消')
+            self.notify('可以说话了；松开右 Alt 或再按右 Alt + 空格结束，Esc 取消'
+                        if self.hold_generation == generation else
+                        '可以说话了，再按快捷键结束；Esc 取消')
         elif kind == 'done':
             text = payload.get('text')
             outcome = 'no-final-result'

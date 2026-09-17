@@ -3,6 +3,7 @@ from pathlib import Path
 import threading
 import unittest
 from unittest.mock import patch
+from gi.repository import GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'bridge'))
 from audio import Result
@@ -45,7 +46,8 @@ class Coordinator(unittest.TestCase):
     def setUp(self):
         self.b=Bridge.__new__(Bridge)
         self.b.generation=4; self.b.phase='processing';self.b.token='token';self.b.last=None
-        self.b.session=type('Session',(),{'cancel':threading.Event()})()
+        self.b.session=type('Session',(),{'cancel':threading.Event(),'stop':threading.Event()})()
+        self.b.hold_generation=None
         self.calls=[]
         self.b.fcitx=lambda *args: self.calls.append(args) or True
         self.b.notify=lambda *args: None
@@ -70,6 +72,41 @@ class Coordinator(unittest.TestCase):
         self.b.phase='recording'
         self.b.event(4,'done',{'text':'早到结果'})
         self.assertFalse(any(x[0]=='Commit' for x in self.calls))
+
+    def shortcut(self, action):
+        self.b.shortcut(None,None,None,None,None,GLib.Variant('(ss)',(action,'context')))
+
+    def test_release_while_connecting_finishes_buffered_audio(self):
+        self.b.phase='connecting';self.b.hold_generation=4
+        self.shortcut('hold-stop')
+        self.assertEqual(self.b.phase,'processing')
+        self.assertTrue(self.b.session.stop.is_set())
+        self.assertFalse(self.b.session.cancel.is_set())
+
+    def test_hold_release_does_not_stop_later_session(self):
+        self.b.phase='recording';self.b.hold_generation=3
+        self.shortcut('hold-stop')
+        self.assertEqual(self.b.phase,'recording')
+        self.assertFalse(self.b.session.stop.is_set())
+
+    def test_space_latches_hold_and_release_is_ignored(self):
+        self.b.phase='recording';self.b.hold_generation=4
+        self.shortcut('toggle');self.shortcut('hold-stop')
+        self.assertEqual(self.b.phase,'recording')
+        self.assertIsNone(self.b.hold_generation)
+        self.assertFalse(self.b.session.stop.is_set())
+        self.shortcut('toggle')
+        self.assertEqual(self.b.phase,'processing')
+        self.assertTrue(self.b.session.stop.is_set())
+
+    def test_stale_focus_rejects_shortcut_before_recording(self):
+        self.b.phase='idle';self.b.session=None
+        self.b.fcitx=lambda *args: self.calls.append(args) or ''
+        with patch('daemon.Session') as session:
+            self.shortcut('hold-start')
+            session.assert_not_called()
+        self.assertEqual(self.calls,[('BeginForContext','context')])
+        self.assertEqual(self.b.phase,'idle')
 
 
 if __name__=='__main__':unittest.main()

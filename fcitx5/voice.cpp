@@ -1,8 +1,11 @@
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/inputcontext.h>
+#include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx-config/iniparser.h>
 #include <fcitx-utils/dbus/objectvtable.h>
+#include <fcitx-utils/event.h>
 #include <fcitx-utils/utf8.h>
 #include <dbus_public.h>
 #include <sys/random.h>
@@ -12,6 +15,12 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+FCITX_CONFIGURATION(VoiceConfig,
+    fcitx::Option<bool> hotkeys{this, "EnableHotkeys", "Enable Right Alt voice shortcuts", false};
+    fcitx::Option<int, fcitx::IntConstrain> holdMs{this, "HoldThresholdMs", "Hold threshold (ms)",
+                                                250, fcitx::IntConstrain(100, 2000)};
+);
 
 // Doubao's audio process receives a single-use capability for the focused field.
 // The D-Bus sender, field lifetime and expiration are checked again at delivery.
@@ -25,6 +34,77 @@ class Dictation final : public fcitx::AddonInstance,
     fcitx::Instance *instance;
     std::unique_ptr<Delivery> pending;
     std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>> listeners;
+    VoiceConfig config;
+    fcitx::TrackableObjectReference<fcitx::InputContext> hotkeyField;
+    std::unique_ptr<fcitx::EventSourceTime> holdTimer;
+    bool altDown = false, holdStarted = false, chordUsed = false, spaceDown = false;
+
+    static std::string contextId(fcitx::InputContext *field) {
+        std::string id;
+        if (field) for (auto byte : field->uuid()) {
+            id += "0123456789abcdef"[byte / 16];
+            id += "0123456789abcdef"[byte % 16];
+        }
+        return id;
+    }
+    void resetHotkey() {
+        if (holdTimer) holdTimer->setEnabled(false);
+        altDown = holdStarted = chordUsed = spaceDown = false;
+        hotkeyField.unwatch();
+    }
+    bool hotkey(fcitx::KeyEvent &key) {
+        if (!*config.hotkeys) return false;
+        auto sym = key.rawKey().sym();
+        auto *field = key.inputContext();
+        if (key.rawKey().states().test(fcitx::KeyState::Repeat) &&
+            ((sym == FcitxKey_Alt_R && altDown) || (sym == FcitxKey_space && spaceDown))) {
+            key.filterAndAccept(); return true;
+        }
+        if (sym == FcitxKey_Alt_R) {
+            if (key.isRelease()) {
+                if (!altDown) return false;
+                if (holdStarted && !chordUsed)
+                    shortcut("hold-stop", contextId(hotkeyField.get()));
+                // Keep an already captured Space release paired with its press.
+                bool space = spaceDown;
+                resetHotkey(); spaceDown = space;
+                key.filterAndAccept(); return true;
+            }
+            if (altDown) { key.filterAndAccept(); return true; }
+            auto modifiers = fcitx::KeyStates(fcitx::KeyState::Ctrl) | fcitx::KeyState::Shift |
+                             fcitx::KeyState::Super | fcitx::KeyState::Super2;
+            if (!eligible(field) || key.rawKey().states().testAny(modifiers) ||
+                !field->inputPanel().clientPreedit().toString().empty() ||
+                !field->inputPanel().preedit().toString().empty()) return false;
+            altDown = true; hotkeyField = field->watch();
+            holdTimer = instance->eventLoop().addTimeEvent(CLOCK_MONOTONIC,
+                fcitx::now(CLOCK_MONOTONIC) + *config.holdMs * 1000, 0,
+                [this](fcitx::EventSourceTime *, uint64_t) {
+                    if (altDown && !chordUsed && eligible(hotkeyField.get())) {
+                        holdStarted = true;
+                        shortcut("hold-start", contextId(hotkeyField.get()));
+                    }
+                    return false;
+                });
+            key.filterAndAccept(); return true;
+        }
+        if (sym == FcitxKey_space && key.isRelease() && spaceDown) {
+            spaceDown = false; key.filterAndAccept(); return true;
+        }
+        if (!altDown || key.isRelease()) return false;
+        if (holdTimer) holdTimer->setEnabled(false);
+        auto modifiers = fcitx::KeyStates(fcitx::KeyState::Ctrl) | fcitx::KeyState::Shift |
+                         fcitx::KeyState::Super | fcitx::KeyState::Super2;
+        if (sym == FcitxKey_space && field == hotkeyField.get() && eligible(field) &&
+            !key.rawKey().states().testAny(modifiers)) {
+            if (!chordUsed) shortcut("toggle", contextId(field));
+            chordUsed = spaceDown = true;
+            key.filterAndAccept(); return true;
+        }
+        if (holdStarted && !chordUsed) shortcut("hold-cancel", contextId(hotkeyField.get()));
+        chordUsed = true;
+        return false;
+    }
 
     bool eligible(fcitx::InputContext *field) const {
         return field && field->hasFocus() &&
@@ -39,8 +119,14 @@ class Dictation final : public fcitx::AddonInstance,
         if (previous) invalidatedTo(previous->sender, previous->ticket, reason);
     }
     void observe(fcitx::Event &event) {
-        if (!pending) return;
         auto &input = static_cast<fcitx::InputContextEvent &>(event);
+        if (event.type() == fcitx::EventType::InputContextKeyEvent) {
+            if (hotkey(static_cast<fcitx::KeyEvent &>(event))) return;
+        } else if (input.inputContext() == hotkeyField.get()) {
+            if (holdStarted) shortcut("hold-cancel", contextId(hotkeyField.get()));
+            resetHotkey();
+        }
+        if (!pending) return;
         if (input.inputContext() != pending->field.get()) return;
         switch (event.type()) {
         case fcitx::EventType::InputContextKeyEvent: {
@@ -59,6 +145,7 @@ class Dictation final : public fcitx::AddonInstance,
     }
 public:
     explicit Dictation(fcitx::Instance *core) : instance(core) {
+        reloadConfig();
         auto *module = instance->addonManager().addon("dbus", true);
         if (!module || !module->call<fcitx::IDBusModule::bus>()->addObjectVTable(
                 "/org/fcitx/Fcitx5/DoubaoDictation", "org.fcitx.Fcitx5.DoubaoDictation1", *this))
@@ -70,6 +157,23 @@ public:
                           fcitx::EventType::InputContextKeyEvent})
             listeners.emplace_back(instance->watchEvent(type, fcitx::EventWatcherPhase::PreInputMethod,
                 [this](fcitx::Event &event) { observe(event); }));
+    }
+    const fcitx::Configuration *getConfig() const override { return &config; }
+    void reloadConfig() override {
+        if (holdStarted) shortcut("hold-cancel", contextId(hotkeyField.get()));
+        resetHotkey();
+        fcitx::readAsIni(config, "conf/doubaovoice.conf");
+    }
+    void setConfig(const fcitx::RawConfig &raw) override {
+        if (holdStarted) shortcut("hold-cancel", contextId(hotkeyField.get()));
+        resetHotkey();
+        config.load(raw, true);
+        fcitx::safeSaveAsIni(config, "conf/doubaovoice.conf");
+    }
+    std::string beginForContext(const std::string &context) {
+        auto *field = instance->mostRecentInputContext();
+        if (context.empty() || contextId(field) != context) return {};
+        return begin();
     }
     std::string begin() {
         auto *field = instance->mostRecentInputContext();
@@ -107,10 +211,12 @@ public:
         return accepted;
     }
     FCITX_OBJECT_VTABLE_METHOD(begin, "Begin", "", "s");
+    FCITX_OBJECT_VTABLE_METHOD(beginForContext, "BeginForContext", "s", "s");
     FCITX_OBJECT_VTABLE_METHOD(valid, "Valid", "s", "b");
     FCITX_OBJECT_VTABLE_METHOD(cancel, "Cancel", "s", "b");
     FCITX_OBJECT_VTABLE_METHOD(commit, "Commit", "ss", "b");
     FCITX_OBJECT_VTABLE_SIGNAL(invalidated, "Invalidated", "ss");
+    FCITX_OBJECT_VTABLE_SIGNAL(shortcut, "Shortcut", "ss");
 };
 
 class Factory : public fcitx::AddonFactory {

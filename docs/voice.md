@@ -25,9 +25,32 @@ systemctl --user daemon-reload
 systemctl --user enable --now doubao-keyboard.service doubao-voice.service
 ```
 
-在桌面快捷键设置中绑定 `doubao-voice toggle` 与 `doubao-voice cancel`。
-快捷键需由用户选择。`doubao-voice status` 查看状态。
-第一次触发连接完成后才开始录音，再次触发结束并提交；Esc、切换输入框或录音中打字会取消。
+可以在桌面快捷键设置中绑定 `doubao-voice toggle` 与 `doubao-voice cancel`。
+`doubao-voice status` 查看状态。
+
+## 右 Alt 快捷键
+
+可选的 Fcitx 按键处理对应官方 Windows 客户端的两种默认绑定：
+
+- 长按 **右 Alt** 开始说话，松开结束录音并提交；短按不启动。
+- **右 Alt + 空格** 开始持续录音，再按一次结束；按住说话时按空格可转为持续录音。
+- **Esc**、切换输入框或录音中打字会取消。密码框和存在未提交拼音时不启动按键听写。
+
+先释放其他插件占用的右 Alt，然后在 Fcitx 配置工具的「豆包语音提交」附加组件中
+启用右 Alt，或编辑 `~/.config/fcitx5/conf/doubaovoice.conf`：
+
+```ini
+EnableHotkeys=True
+HoldThresholdMs=250
+```
+
+首次安装新模块后重启 Fcitx；之后修改这个配置可执行
+`busctl --user call org.fcitx.Fcitx5 /controller org.fcitx.Fcitx.Controller1 ReloadAddonConfig s doubaovoice`。
+快捷键默认关闭，安装脚本不自动修改其他插件。它在普通 Fcitx 输入框中生效，
+可搭配豆包、英文键盘或其他输入法，不依赖桌面全局按键监听。
+
+开始后先录音，在云端连接建立前只缓存在进程内存中，最多 20 秒；连接成功才发送。
+连接期间松开右 Alt 会结束采集，并在连接就绪后发送已经采集的短句；取消则丢弃未发送的缓存。
 
 ## 范围
 
@@ -36,7 +59,7 @@ systemctl --user enable --now doubao-keyboard.service doubao-voice.service
 - 仅接受匹配的分段最终结果和整句结束确认；取消、断线或旧会话不提交。
 - Fcitx 的提交许可绑定调用进程和当前输入框，只能使用一次。
 - 当前只接收单行文本；控制字符、多行文本会被拒绝。
-- 官方设置里的 Windows 语音热键、麦克风和标点选项不控制这个 Linux 录音器。
+- 官方设置里的 Windows 语音热键、麦克风和标点选项不控制这个 Linux 录音器；上述绑定由 Fcitx 配置管理。
 
 默认遵守用户的代理配置。如果出现特定域名握手失败，可自行设置 `asr_no_proxy`，
 例如 `log.snssdk.com,is.snssdk.com,frontier-audio-ime-ws.doubao.com`；此设置只影响适配器子进程。

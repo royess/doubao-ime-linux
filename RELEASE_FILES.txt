@@ -49,6 +49,7 @@ tests/integration_settings_engine.py
 tests/integration_settings_ui.py
 tests/mock_keyboard.py
 tests/settings_ui_probe.c
+tests/test_audio_buffer.py
 tests/test_install.py
 tests/test_package.py
 tests/test_settings_merge.py

@@ -1,6 +1,7 @@
 """One bounded recording session. Network and audio never run on the D-Bus loop."""
 import asyncio
 import base64
+from collections import deque
 import json
 from pathlib import Path
 import sys
@@ -62,6 +63,8 @@ class Session:
         ready = asyncio.Event()
         result = Result()
         diagnostics = []
+        queued = deque()
+        queued_bytes = 0
 
         async def output():
             async for line in provider.stdout:
@@ -77,16 +80,22 @@ class Session:
 
         async def send(event):
             provider.stdin.write((json.dumps(event)+'\n').encode())
-            await provider.stdin.drain()
+            await asyncio.wait_for(provider.stdin.drain(), 2)
 
         async def feed():
+            nonlocal queued_bytes
             while not self.stop.is_set() and not self.cancel.is_set():
                 chunk = await capture.stdout.read(3200)
                 if not chunk:
                     break
                 if self.stop.is_set() or self.cancel.is_set():
                     break
-                await send({'type': 'audio', 'audio_base64': base64.b64encode(chunk).decode()})
+                queued.append(chunk)
+                queued_bytes += len(chunk)
+                # At most 20 seconds of 16 kHz mono PCM while connecting.
+                if queued_bytes > 640000:
+                    result.error = True
+                    return
 
         async def terminate(process):
             if process and process.returncode is None:
@@ -103,24 +112,29 @@ class Session:
         readers = [asyncio.create_task(output()), asyncio.create_task(errors())]
         finished = False
         try:
+            command = ['parec', '--raw', '--format=s16le', '--rate=16000', '--channels=1',
+                       '--latency-msec=20', '--client-name=Doubao-Fcitx-Voice']
+            if self.source:
+                command += ['--device='+self.source]
+            if not self.cancel.is_set() and not self.stop.is_set():
+                capture = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE,
+                                                              stderr=asyncio.subprocess.DEVNULL)
+                feed_task = asyncio.create_task(feed())
+                self.callback('recording', {})
             while provider.returncode is None:
-                if self.cancel.is_set():
+                if self.cancel.is_set() or result.error:
                     break
-                if self.stop.is_set() and not finished:
+                if self.stop.is_set() and capture and capture.returncode is None:
                     await terminate(capture)
                     if feed_task:
                         await feed_task
-                    await send({'type': 'finish'})
-                    finished = True
-                elif ready.is_set() and capture is None and not finished:
-                    command = ['parec', '--raw', '--format=s16le', '--rate=16000', '--channels=1',
-                               '--latency-msec=20', '--client-name=Doubao-Fcitx-Voice']
-                    if self.source:
-                        command += ['--device='+self.source]
-                    capture = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE,
-                                                                  stderr=asyncio.subprocess.DEVNULL)
-                    feed_task = asyncio.create_task(feed())
-                    self.callback('recording', {})
+                if ready.is_set() and not finished:
+                    while queued and not self.cancel.is_set():
+                        chunk = queued.popleft(); queued_bytes -= len(chunk)
+                        await send({'type': 'audio', 'audio_base64': base64.b64encode(chunk).decode()})
+                    if self.stop.is_set() and not self.cancel.is_set():
+                        await send({'type': 'finish'})
+                        finished = True
                 if capture and capture.returncode is not None and not self.stop.is_set():
                     result.error = True
                     break

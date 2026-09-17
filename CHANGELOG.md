@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Distinct blue-and-white 豆 tray icon and matching settings launcher icon.
+- Optional Right Alt push-to-talk and Right Alt+Space hands-free dictation in Fcitx.
+- Bounded audio buffering preserves speech recorded before the ASR connection is ready.
 
 ## 0.1.0-rc.1
 

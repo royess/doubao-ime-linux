@@ -47,9 +47,9 @@ jobs:
           cmake --build build/keyboard-only -j2
       - name: Build Windows helpers
         run: python3 scripts/build_windows.py
-      - name: Unit tests
+      - name: All unit tests, including audio buffering and voice state
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
-      - name: Real Fcitx and GTK integration with mock engine
+      - name: Fcitx and GTK keyboard, Right Alt shortcuts and dictation guards
         run: |
           timeout 120s python3 scripts/headless.py --prefix none -- \
             dbus-run-session -- python3 tests/integration_fcitx.py --mock-engine
