@@ -1,0 +1,24 @@
+name: Source checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ pkg-config libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev libjson-c-dev python3-gi gcc-mingw-w64-x86-64
+      - name: Build native modules
+        run: |
+          cmake -S . -B build/fcitx
+          cmake --build build/fcitx -j2
+      - name: Build Windows helpers
+        run: python3 scripts/build_windows.py
+      - name: Unit tests and source audit
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 scripts/package.py --check
+          python3 scripts/package.py

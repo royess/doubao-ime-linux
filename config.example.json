@@ -1,0 +1,7 @@
+{
+  "wine": "wine",
+  "wineserver": "wineserver",
+  "xvfb": "Xvfb",
+  "mingw_cc": "x86_64-w64-mingw32-gcc",
+  "innoextract": "innoextract"
+}

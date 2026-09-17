@@ -1,0 +1,15 @@
+/work/
+/build/
+/.cache/
+/dist/
+/vendor/
+/config.local.json
+__pycache__/
+*.pyc
+*.log
+*.exe
+*.dll
+*.so
+*.msi
+*.wav
+*.png
