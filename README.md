@@ -84,7 +84,8 @@ Restart Fcitx 5 and add **Doubao / 豆包** in its configuration tool. The insta
 does not restart Fcitx, change your default input method or assign desktop
 shortcuts. It refuses to overwrite existing files with the same names.
 
-- **Keyboard:** select with Space or a number, page with PageUp/PageDown, and
+- **Settings:** when installed with `--settings`, select Doubao and open “豆包设置” from the Fcitx tray menu in Waybar or another panel (requires `gio`).
+- **Keyboard:** select with Space or a number, use `-` for the previous page and `=` for the next page, and
   cancel with Escape. Configure Chinese/English switching in Fcitx.
 - **Settings:** run `doubao-settings` or open the Doubao settings application
   menu entry. **Keyboard changes apply when the window closes.**

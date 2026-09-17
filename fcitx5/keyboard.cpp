@@ -1,11 +1,15 @@
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
+#include <fcitx/action.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/statusarea.h>
 #include <fcitx/userinterface.h>
+#include <fcitx-utils/misc.h>
+#include <fcitx-utils/standardpath.h>
 #include <fcitx-utils/utf8.h>
 #include <json-c/json.h>
 #include <sys/socket.h>
@@ -19,6 +23,7 @@
 #include <memory>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 struct Reply { int result=0, cursor=0, selected=0; std::string preedit, commit; std::vector<std::string> candidates; };
 
@@ -80,8 +85,22 @@ private:Engine *engine_;int index_;unsigned generation_;
 
 class Engine final:public fcitx::InputMethodEngine {
 public:
-    explicit Engine(fcitx::Instance *instance):instance_(instance){}
+    explicit Engine(fcitx::Instance *instance):instance_(instance){
+        settingsAction_.setShortText("豆包设置");
+        settingsAction_.setIcon("doubao-ime-linux");
+        settingsAction_.registerAction("doubao-settings", &instance_->userInterfaceManager());
+        settingsConnection_=settingsAction_.connect<fcitx::SimpleAction::Activated>([](fcitx::InputContext *){
+            auto desktop=fcitx::StandardPath::global().locate(
+                fcitx::StandardPath::Type::Data, "applications/doubao-settings.desktop");
+            if(!desktop.empty())fcitx::startProcess({"gio", "launch", desktop});
+        });
+    }
     void activate(const fcitx::InputMethodEntry &,fcitx::InputContextEvent &event)override {
+        if(!fcitx::StandardPath::global().locate(fcitx::StandardPath::Type::Data,
+                                               "applications/doubao-settings.desktop").empty()){
+            event.inputContext()->statusArea().addAction(fcitx::StatusGroup::InputMethod, &settingsAction_);
+            event.inputContext()->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+        }
         target_=event.inputContext()->watch();
         if(sensitive(target_.get()))return;
         transact(event.inputContext(),"F");
@@ -95,6 +114,13 @@ public:
         transact(ic,"S "+std::to_string(index));
     }
     void keyEvent(const fcitx::InputMethodEntry &,fcitx::KeyEvent &event)override {
+        // Paging is handled locally. Consume its matching release as well:
+        // sending it to the engine would rebuild the list at the first page.
+        // Track physical keys so changing Shift before release is harmless.
+        auto keycode=event.rawKey().code();
+        if(event.isRelease()){
+            if(pagingKeys_.erase(keycode)){event.filterAndAccept();return;}
+        }else pagingKeys_.erase(keycode);
         auto *ic=event.inputContext();
         if(sensitive(ic))return;
         if(event.key().states().testAny(fcitx::KeyStates(fcitx::KeyState::Ctrl)|fcitx::KeyState::Alt|fcitx::KeyState::Super|fcitx::KeyState::Super2)){
@@ -112,9 +138,10 @@ public:
             if(index>=0&&index<candidates->size()){
                 candidates->candidate(index).select(ic);event.filterAndAccept();return;
             }
-            if(sym==FcitxKey_Page_Down||sym==FcitxKey_Page_Up){
+            if(sym==FcitxKey_equal||sym==FcitxKey_minus){
                 auto *pages=candidates->toPageable();
-                if(pages){if(sym==FcitxKey_Page_Down)pages->next();else pages->prev();
+                if(pages){if(sym==FcitxKey_equal)pages->next();else pages->prev();
+                    pagingKeys_.insert(keycode);
                     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);event.filterAndAccept();return;}
             }
             if(sym==FcitxKey_Down||sym==FcitxKey_Up){
@@ -185,8 +212,11 @@ private:
         }
     }
     fcitx::Instance *instance_;
+    fcitx::SimpleAction settingsAction_;
+    fcitx::ScopedConnection settingsConnection_;
     fcitx::TrackableObjectReference<fcitx::InputContext> target_;
     unsigned generation_=0;
+    std::unordered_set<unsigned> pagingKeys_;
 };
 void Word::select(fcitx::InputContext *ic)const{engine_->choose(ic,index_,generation_);}
 class Factory:public fcitx::AddonFactory{public:fcitx::AddonInstance *create(fcitx::AddonManager *m)override{return new Engine(m->instance());}};

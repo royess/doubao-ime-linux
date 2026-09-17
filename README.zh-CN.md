@@ -72,7 +72,8 @@ systemctl --user enable --now doubao-keyboard.service
 重新启动 Fcitx 5，在 Fcitx 配置工具中添加「豆包 / Doubao」。安装脚本不自动重启
 Fcitx，不更改默认输入法，不修改桌面快捷键，遇到已有同名文件会停止。
 
-- 键盘：空格或数字选词，PageUp / PageDown 翻页，Esc 取消；中英文切换由 Fcitx 配置管理。
+- 键盘：空格或数字选词，`-` 上一页、`=` 下一页，Esc 取消；中英文切换由 Fcitx 配置管理。
+- 设置：安装时带上 `--settings`，切换到豆包后，可从 Waybar 等托盘中的 Fcitx 菜单点击「豆包设置」（需要 `gio`）。
 - 设置：应用菜单打开「豆包输入法设置（官方）」或运行 `doubao-settings`；**关闭窗口后应用键盘变更**。
 - 语音：是可选组件，需单独配置外部适配器，见 [语音说明](docs/voice.md)。
   可在豆包语音附加组件中启用右 Alt 长按说话、松开提交，以及右 Alt + 空格持续录音。
