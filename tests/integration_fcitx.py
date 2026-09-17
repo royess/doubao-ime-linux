@@ -55,8 +55,33 @@ config=area/'config/fcitx5';config.mkdir(parents=True)
 log=(STATE/'integration-fcitx.log').open('w')
 broker_source=ROOT/('tests/mock_keyboard.py' if args.mock_engine else 'bridge/keyboard_broker.py')
 broker=subprocess.Popen([sys.executable,str(broker_source)],stdout=log,stderr=log)
-core=subprocess.Popen(['fcitx5','-D','-k','--disable','all','--enable',
-    'keyboard,dbus,dbusfrontend,doubaoime,doubaovoice'],stdout=log,stderr=log)
+core=subprocess.Popen(['fcitx5','-D','--disable','all','--enable',
+    'keyboard,xcb,dbus,dbusfrontend,doubaoime,doubaovoice'],stdout=log,stderr=log)
+# Wait before creating a GTK input context. Otherwise the session bus can
+# auto-start an unrelated default Fcitx process with its original environment.
+try:
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline:
+        if core.poll() is not None:raise RuntimeError('Test Fcitx exited during startup; see work/integration-fcitx.log')
+        owned=bus.call_sync('org.freedesktop.DBus','/org/freedesktop/DBus','org.freedesktop.DBus',
+            'NameHasOwner',GLib.Variant('(s)',('org.fcitx.Fcitx5',)),None,
+            Gio.DBusCallFlags.NONE,2000,None).unpack()[0]
+        if owned:
+            pid=bus.call_sync('org.freedesktop.DBus','/org/freedesktop/DBus','org.freedesktop.DBus',
+                'GetConnectionUnixProcessID',GLib.Variant('(s)',('org.fcitx.Fcitx5',)),None,
+                Gio.DBusCallFlags.NONE,2000,None).unpack()[0]
+            if pid!=core.pid:raise RuntimeError('Unexpected Fcitx process owns the private bus')
+            available=dbus('/controller','org.fcitx.Fcitx.Controller1','AvailableInputMethods')[0]
+            if any(item[0]=='doubao' for item in available):break
+        time.sleep(0.1)
+    else:raise TimeoutError('Test Fcitx did not register the Doubao addon')
+except BaseException:
+    for process in [core,broker]:
+        if process.poll() is None:process.terminate()
+        try:process.wait(timeout=5)
+        except subprocess.TimeoutExpired:process.kill();process.wait()
+    log.close();temporary.cleanup()
+    raise
 window=Gtk.Window(title='Doubao release integration test')
 box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 fields=[Gtk.Entry(),Gtk.Entry(),Gtk.Entry()];fields[2].set_visibility(False)

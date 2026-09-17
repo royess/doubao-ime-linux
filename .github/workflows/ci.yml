@@ -33,7 +33,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ clang pkg-config libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev libjson-c-dev python3-gi gcc-mingw-w64-x86-64 fcitx5 fcitx5-frontend-gtk3 gir1.2-gtk-3.0 libxtst6 xvfb dbus-x11 systemd
+          sudo apt-get install -y --no-install-recommends cmake g++ clang pkg-config libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev libjson-c-dev python3-gi gcc-mingw-w64-x86-64 fcitx5 fcitx5-frontend-gtk3 gir1.2-gtk-3.0 libxtst6 xvfb dbus-x11 systemd
       - name: Prepare private runtime directory
         run: |
           runtime_dir="$RUNNER_TEMP/doubao-runtime-$CI_COMPILER"
