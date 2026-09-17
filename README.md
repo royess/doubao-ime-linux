@@ -89,6 +89,11 @@ shortcuts. It refuses to overwrite existing files with the same names.
   cancel with Escape. Configure Chinese/English switching in Fcitx.
 - **Settings:** run `doubao-settings` or open the Doubao settings application
   menu entry. **Keyboard changes apply when the window closes.**
+  Only part of the native settings UI is supported: full pinyin, simplified/traditional
+  output, Xiaohe and Ziranma double pinyin, and Wubi 86 have been verified. Paging
+  keys, page size, and candidate layout are controlled by the Linux bridge;
+  Windows appearance and voice settings are not mapped. See the
+  [settings support notes](docs/settings.md) (Chinese) for details.
 - **Voice:** optional; configure an external adapter as described in the
   [voice notes](docs/voice.md) (Chinese). You can also use an independent Fcitx
   voice addon alongside this keyboard bridge.
