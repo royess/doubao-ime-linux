@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 TOP={'README.md','README.zh-CN.md','LICENSE','THIRD_PARTY.md','CHANGELOG.md','CONTRIBUTING.md',
      'VERSION','RELEASE_FILES.txt','.gitignore','CMakeLists.txt','config.example.json'}
 DIRECTORIES={'bridge','fcitx5','scripts','tests','docs','.github'}
-SUFFIXES={'.py','.c','.cs','.cpp','.h','.md','.conf','.yml','.yaml'}
+SUFFIXES={'.py','.c','.cs','.cpp','.h','.md','.conf','.yml','.yaml','.svg'}
 
 
 def sources():

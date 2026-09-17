@@ -31,6 +31,7 @@ docs/voice.md
 fcitx5/doubao.conf
 fcitx5/doubaoime.conf
 fcitx5/doubaovoice.conf
+fcitx5/icons/doubao-ime-linux.svg
 fcitx5/keyboard.cpp
 fcitx5/voice.cpp
 scripts/build_windows.py

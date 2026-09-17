@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Distinct blue-and-white 豆 tray icon and matching settings launcher icon.
+
 ## 0.1.0-rc.1
 
 First source preview for the official DoubaoIME 0.9.0.0 keyboard engine on Fcitx 5.

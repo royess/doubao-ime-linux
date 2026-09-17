@@ -39,6 +39,8 @@ def plan(prefix, unit_dir, voice=False, settings=False):
         put(prefix / 'share/fcitx5/addon' / (addon + '.conf'),
             (ROOT / 'fcitx5' / (addon + '.conf')).read_text().replace(
                 'Library='+addon, 'Library='+str(library.with_suffix(''))))
+    put(prefix / 'share/icons/hicolor/scalable/apps/doubao-ime-linux.svg',
+        (ROOT/'fcitx5/icons/doubao-ime-linux.svg').read_bytes())
     put(prefix / 'share/fcitx5/inputmethod/doubao.conf', (ROOT/'fcitx5/doubao.conf').read_bytes())
     commands = {'keyboard': launcher('doubao-keyboard', [ROOT/'scripts/headless.py',
                     '--prefix', 'keyboard', '--', sys.executable, ROOT/'bridge/keyboard_broker.py'])}
@@ -70,7 +72,7 @@ Name=Doubao input settings
 Name[zh_CN]=豆包输入法设置（官方）
 Comment=Keyboard settings for the experimental Fcitx bridge
 Exec="{desktop_command}"
-Icon=input-keyboard
+Icon=doubao-ime-linux
 Terminal=false
 Categories=Settings;
 ''')
