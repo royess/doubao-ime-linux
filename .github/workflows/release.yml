@@ -1,0 +1,57 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  publish:
+    name: Publish verified source release
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate tag and release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cat VERSION)
+          test "$RELEASE_TAG" = "v$version"
+          test -f "docs/releases/$version.md"
+      - name: Download source artifact from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: source-${{ github.sha }}
+          path: dist
+      - name: Verify artifact against tagged source
+        run: python3 scripts/check_package.py
+      - name: Create release with both assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cat VERSION)
+          flags=()
+          if [[ "$version" == *-rc.* ]]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'A release already exists for this tag; review it before retrying.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            "dist/doubao-ime-linux-$version.tar.gz" dist/SHA256SUMS \
+            --verify-tag --draft --title "doubao-ime-linux $RELEASE_TAG" \
+            --notes-file "docs/releases/$version.md" "${flags[@]}"
+          gh release edit "$RELEASE_TAG" --draft=false

@@ -1,5 +1,6 @@
 """Real Fcitx/GTK tests on a private D-Bus session and Xvfb; no audio needed."""
 import ctypes as C
+import argparse
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,13 @@ import time
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bridge'))
 from runtime import ROOT, STATE
 
-if not os.environ.get('DOUBAO_MANAGED_PREFIX'):
+parser=argparse.ArgumentParser()
+parser.add_argument('--mock-engine',action='store_true',help='Use a local fixture, without Wine or official components')
+args=parser.parse_args()
+
+if os.environ.get('DOUBAO_PRIVATE_DISPLAY') != '1':
+    raise SystemExit('Run via scripts/headless.py on a private display')
+if not args.mock_engine and not os.environ.get('DOUBAO_MANAGED_PREFIX'):
     raise SystemExit('Run via scripts/headless.py -- dbus-run-session -- python3 tests/integration_fcitx.py')
 os.environ['GTK_IM_MODULE']='fcitx'
 os.environ['GDK_BACKEND']='x11'
@@ -46,7 +53,8 @@ config=area/'config/fcitx5';config.mkdir(parents=True)
     '[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=doubao\nLayout=\n\n'
     '[GroupOrder]\n0=Default\n')
 log=(STATE/'integration-fcitx.log').open('w')
-broker=subprocess.Popen([sys.executable,str(ROOT/'bridge/keyboard_broker.py')],stdout=log,stderr=log)
+broker_source=ROOT/('tests/mock_keyboard.py' if args.mock_engine else 'bridge/keyboard_broker.py')
+broker=subprocess.Popen([sys.executable,str(broker_source)],stdout=log,stderr=log)
 core=subprocess.Popen(['fcitx5','-D','-k','--disable','all','--enable',
     'keyboard,dbus,dbusfrontend,doubaoime,doubaovoice'],stdout=log,stderr=log)
 window=Gtk.Window(title='Doubao release integration test')
@@ -83,7 +91,23 @@ def sequence():
     subprocess.run(['fcitx5-remote','-s','doubao'],check=True);yield 300
     for char in 'nihao':key(ord(char));yield 150
     key(32);yield 400
-    check('official keyboard commits into GTK',fields[0].get_text()=='你好')
+    check(('fixture' if args.mock_engine else 'official')+' keyboard commits into GTK',fields[0].get_text()=='你好')
+    if args.mock_engine:
+        fields[0].set_text('')
+        for char in 'nihao':key(ord(char));yield 100
+        key(ord('2'));yield 200
+        check('non-first candidate selected through Fcitx',fields[0].get_text()=='您好')
+        fields[0].set_text('')
+        for char in 'ni':key(ord(char));yield 100
+        key(0xff1b);yield 200
+        check('Escape drops uncommitted preedit',not fields[0].get_text())
+        for char in 'nihao':key(ord(char));yield 100
+        fields[1].grab_focus();yield 250
+        check('focus loss does not commit unfinished preedit',not fields[0].get_text())
+        fields[0].grab_focus();yield 200
+        for char in 'nihao':key(ord(char));yield 100
+        key(32);yield 200
+        check('keyboard recovers after focus reset',fields[0].get_text()=='你好')
     subprocess.run(['fcitx5-remote','-s','keyboard-us'],check=True);yield 250
     token=voice('Begin');check('focused field gets ticket',bool(token))
     other=Gio.DBusConnection.new_for_address_sync(os.environ['DBUS_SESSION_BUS_ADDRESS'],
@@ -127,5 +151,6 @@ finally:
         try:process.wait(timeout=8)
         except subprocess.TimeoutExpired:process.kill();process.wait()
     log.close();temporary.cleanup()
-    (STATE/'integration-fcitx.json').write_text(json.dumps({'passed':success,'checks':results},ensure_ascii=False,indent=2)+'\n')
+    (STATE/'integration-fcitx.json').write_text(json.dumps({'passed':success,
+        'engine':'fixture' if args.mock_engine else 'official','checks':results},ensure_ascii=False,indent=2)+'\n')
 raise SystemExit(0 if success else 1)

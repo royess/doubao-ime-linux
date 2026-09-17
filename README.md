@@ -1,41 +1,54 @@
 # doubao-ime-linux
 
-Experimental Fcitx 5 bridge for the official Doubao Windows keyboard engine,
-with an optional official settings UI and optional voice input.
+**English** | [简体中文](README.zh-CN.md)
 
-**0.1.0-rc.1 · 源码预发布版 · 非官方项目 · Linux x86_64**
+[![CI](https://github.com/royess/doubao-ime-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/royess/doubao-ime-linux/actions/workflows/ci.yml)
+[Download releases](https://github.com/royess/doubao-ime-linux/releases)
 
-将豆包 Windows 输入法 **0.9.0.0** 的键盘引擎接入 Fcitx 5。候选词由官方引擎生成，
-预编辑、候选框和文字提交由 Fcitx 处理。支持常用拼音、选词、分段转换、退格与取消；
-官方设置窗口可用于配置已验证的全拼、双拼、五笔和繁简选项。
+An experimental Fcitx 5 bridge for the official Doubao Windows keyboard engine,
+with an optional official settings window and optional voice input.
 
-这是版本固定的兼容实验。**不能视为 Windows 豆包输入法的完整 Linux 移植。**
-语音和外观页面、账号同步、部分官方快捷键尚未接通；详见 [设置边界](docs/settings.md)。
+**0.1.0-rc.1 · Source preview · Unofficial · Linux x86_64**
+
+The official **DoubaoIME 0.9.0.0** engine generates candidates; Fcitx handles the
+preedit, candidate UI and text delivery. The bridge supports common Pinyin input,
+candidate selection, segmented conversion, backspace and cancellation. The
+official settings window can configure verified full Pinyin, double Pinyin,
+Wubi and simplified/traditional Chinese options.
+
+This experiment targets a fixed engine version. **It is not a complete Linux
+port of the Windows input method.** Windows voice and appearance settings,
+account synchronization and some shortcuts are not connected. See the
+[settings limitations](docs/settings.md) for details (Chinese).
 
 ```text
-按键 → Fcitx 原生插件 → 本地 socket → Wine RPC 宿主 → 官方豆包引擎
-            ← 预编辑、候选词、提交 ←
+Keys → native Fcitx addon → local socket → Wine RPC host → official Doubao engine
+              ← preedit, candidates and committed text ←
 
-可选语音：Linux 录音 → 外部 ASR 适配器 → 豆包语音服务
-                                    → Fcitx 焦点校验 → 文字提交
+Optional voice: Linux recording → external ASR adapter → Doubao speech service
+                                                     → Fcitx focus checks → text
 ```
 
-## 依赖
+## Requirements
 
-核心需要 Fcitx 5 开发文件、json-c、CMake、C++17 编译器、Python 3.11+、
-64 位 Wine、Xvfb 和 x86_64 MinGW-w64 C 编译器。设置额外需要 Wine Mono **11.3.0**
-和 Noto Sans CJK SC 字体。桌面安装示例使用 systemd 用户服务。
+The core requires Fcitx 5 development files, json-c, CMake, a C++17 compiler,
+Python 3.11+, 64-bit Wine, Xvfb and an x86_64 MinGW-w64 C compiler. The optional
+settings window requires **Wine Mono 11.3.0** and the Noto Sans CJK SC font.
+The desktop installation examples use systemd user services.
 
-发行版包名、提取工具和可替换路径见 [安装说明](docs/install.md)。
-没有自动下载或执行第三方安装器的脚本；官方 EXE/DLL、字体、Wine 和账号数据均不在源码包中。
+See the [installation notes](docs/install.md) for distribution package names,
+extractor details and configurable paths (Chinese). Third-party installers are
+not downloaded or executed automatically. Official EXE/DLL files, fonts, Wine
+and account data are not included in the source archive.
 
-## 构建与准备
+## Build and prepare
 
-以下命令在源码目录执行。保留这个目录：启动入口会引用它。
+Run these commands from the source directory. Keep that directory in place:
+installed launchers refer to it.
 
 ```sh
 cp config.example.json config.local.json
-# 如依赖不在 PATH，编辑 config.local.json 填入对应工具的绝对路径。
+# Set absolute tool paths in config.local.json if dependencies are not in PATH.
 cmake -S . -B build/fcitx
 cmake --build build/fcitx -j2
 python3 scripts/build_windows.py
@@ -44,10 +57,12 @@ python3 scripts/prepare.py extract --installer /path/to/DoubaoIME_Installer_0.9.
 python3 scripts/prepare.py init
 ```
 
-提取工具必须支持 Inno Setup 6.7；脚本校验官方安装包及 RPC DLL 的 SHA-256，
-拒绝其他版本。`init` 使用自己的虚拟显示和全新 Wine prefix，不导入现有账号或词库。
+The extractor must support Inno Setup 6.7. The preparation tool verifies the
+installer and RPC DLL SHA-256 hashes and rejects unsupported versions. `init`
+uses a private display and fresh Wine prefix; it does not import existing
+accounts or dictionaries.
 
-需要官方设置窗口时，使用如下准备命令；它也会检查键盘运行环境：
+To prepare the official settings window as well:
 
 ```sh
 python3 scripts/prepare.py init --settings \
@@ -55,56 +70,90 @@ python3 scripts/prepare.py init --settings \
   --font /path/to/NotoSansCJK-Regular.ttc
 ```
 
-## 安装到当前用户
+## Install for the current user
 
 ```sh
-# 不需要设置窗口时，去掉 --settings。
+# Omit --settings if you do not need the settings window.
 python3 scripts/install.py install --settings --dry-run
 python3 scripts/install.py install --settings
 systemctl --user daemon-reload
 systemctl --user enable --now doubao-keyboard.service
 ```
 
-重新启动 Fcitx 5，在 Fcitx 配置工具中添加「豆包 / Doubao」。安装脚本不自动重启
-Fcitx，不更改默认输入法，不修改桌面快捷键，遇到已有同名文件会停止。
+Restart Fcitx 5 and add **Doubao / 豆包** in its configuration tool. The installer
+does not restart Fcitx, change your default input method or assign desktop
+shortcuts. It refuses to overwrite existing files with the same names.
 
-- 键盘：空格或数字选词，PageUp / PageDown 翻页，Esc 取消；中英文切换由 Fcitx 配置管理。
-- 设置：应用菜单打开「豆包输入法设置（官方）」或运行 `doubao-settings`；**关闭窗口后应用键盘变更**。
-- 语音：是可选组件，需单独配置外部适配器，见 [语音说明](docs/voice.md)。
+- **Keyboard:** select with Space or a number, page with PageUp/PageDown, and
+  cancel with Escape. Configure Chinese/English switching in Fcitx.
+- **Settings:** run `doubao-settings` or open the Doubao settings application
+  menu entry. **Keyboard changes apply when the window closes.**
+- **Voice:** optional; configure an external adapter as described in the
+  [voice notes](docs/voice.md) (Chinese). You can also use an independent Fcitx
+  voice addon alongside this keyboard bridge.
 
-如果桌面不支持 systemd 用户服务，可在自己的会话管理器中启动 `doubao-keyboard`。
-设置窗口关闭后，非 systemd 管理的引擎需自行停止再应用配置；当前自动应用只支持项目的用户服务。
+Without systemd user services, start `doubao-keyboard` using your own session
+manager. Stop a manually managed engine before applying settings, then restart
+it yourself; automatic stop/restart only manages this installation's user service.
 
-## 验证与卸载
+## Verify and uninstall
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py'
 python3 scripts/doctor.py
 
-# 需要已准备的运行环境；仅在此源码目录的键盘服务停止时执行。
+# Requires a prepared runtime and this checkout's keyboard service to be stopped.
 python3 scripts/headless.py --prefix keyboard -- python3 tests/integration_keyboard.py
 python3 scripts/headless.py --prefix keyboard -- \
   dbus-run-session -- python3 tests/integration_fcitx.py
 ```
 
-普通单元测试不运行 Wine、不接触桌面、不录音或联网。集成测试使用独立显示和 D-Bus，
-原始运行记录写入被忽略的 `work/`。已验证范围见 [验证记录](docs/validation.md)。
+Unit tests do not launch Wine, use the desktop, record audio or access the
+network. Integration tests use a private display and D-Bus session. Their logs
+go to the ignored `work/` directory. See the [validation record](docs/validation.md).
 
 ```sh
 systemctl --user disable --now doubao-keyboard.service
-# 若曾启用语音，也先停止并禁用 doubao-voice.service。
+# Also stop and disable doubao-voice.service if you enabled it.
 python3 scripts/install.py uninstall
 systemctl --user daemon-reload
 ```
 
-随后从 Fcitx 配置中移除豆包并重新启动 Fcitx。卸载只移除安装清单内未被另行修改的文件，
-保留 `work/` 中的运行环境、设置和凭据。不要在服务运行时移动源码目录。
+Remove Doubao from the Fcitx configuration and restart Fcitx. Uninstallation
+removes only unchanged files recorded in the installation manifest; it retains
+the runtime, settings and credentials in `work/`. Do not move the source
+directory while its services are running.
 
-## 发布范围
+## Automated tests and releases
 
-本仓库仅发布桥接源码、构建工具、测试和文档。MIT 许可与第三方边界见
-[LICENSE](LICENSE) 和 [THIRD_PARTY.md](THIRD_PARTY.md)。
-官方引擎可能联网，语音识别会发送录音到云端；详见 [数据与运行边界](docs/privacy.md)。
+Pushes to `main`, pull requests and manual workflow runs automatically check:
 
-接口记录：[keyboard-abi.md](docs/keyboard-abi.md)。
-本地打包：`python3 scripts/package.py`；产物在 `dist/`，文件范围由 `RELEASE_FILES.txt` 明确列出。
+- GCC and Clang native builds, with voice enabled and keyboard-only builds,
+  plus the MinGW Windows helpers.
+- Unit tests, staged installation/removal and systemd unit syntax.
+- Real Fcitx/GTK input and voice-delivery protections under private Xvfb/D-Bus.
+- The source allowlist, local links in both READMEs, archive contents and
+  reproducible packaging.
+
+CI uses a deterministic mock keyboard engine. **It does not verify the official
+Doubao engine or live cloud ASR compatibility.** CI needs no official installer,
+account, credentials or recording. Separate official-engine checks are recorded
+in the [validation notes](docs/validation.md).
+
+Pushing a `v*` tag matching `VERSION` runs the complete CI suite before creating
+a GitHub Release with the source archive and `SHA256SUMS`. Release-candidate tags
+are marked as prereleases. See the [release procedure](docs/release.md).
+
+## Scope and licensing
+
+This repository distributes bridge source, build tools, tests and documentation.
+See [LICENSE](LICENSE) and [THIRD_PARTY.md](THIRD_PARTY.md) for the MIT license,
+attribution and the boundary with separately supplied components.
+
+The official engine may access the network. Optional speech recognition sends
+recordings to a cloud service. Wine prefixes are not security sandboxes. See
+the [data and runtime notes](docs/privacy.md) for details (Chinese).
+
+The verified interface is documented in [keyboard-abi.md](docs/keyboard-abi.md).
+Run `python3 scripts/package.py` to produce a source archive in `dist/`;
+`RELEASE_FILES.txt` explicitly lists every included file.

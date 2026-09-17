@@ -11,7 +11,8 @@ Settings changes need merge/conflict tests and a private settings-window check.
 
 Keep desktop installation opt-in and reversible. Tests must use a private
 display, private D-Bus session and this checkout's exclusive Wine prefixes.
-Do not add automatic publishing workflows or runtime downloads to normal tests.
+Publishing is restricted to version tags after the reusable CI workflow passes.
+Do not add runtime downloads or cloud credentials to normal tests.
 
 When adding distributable source files, update `RELEASE_FILES.txt` and run
 `python3 scripts/package.py --check`. New third-party code requires an explicit

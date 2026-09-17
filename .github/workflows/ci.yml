@@ -1,24 +1,83 @@
-name: Source checks
-on: [push, pull_request]
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  build:
+  test:
+    name: Build and test (${{ matrix.compiler }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cxx: g++
+          - compiler: clang
+            cxx: clang++
+    env:
+      CXX: ${{ matrix.cxx }}
+      CI_COMPILER: ${{ matrix.compiler }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ pkg-config libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev libjson-c-dev python3-gi gcc-mingw-w64-x86-64
-      - name: Build native modules
+          sudo apt-get install -y cmake g++ clang pkg-config libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev libjson-c-dev python3-gi gcc-mingw-w64-x86-64 fcitx5 fcitx5-frontend-gtk3 gir1.2-gtk-3.0 libxtst6 xvfb dbus-x11 systemd
+      - name: Prepare private runtime directory
         run: |
-          cmake -S . -B build/fcitx
+          runtime_dir="$RUNNER_TEMP/doubao-runtime-$CI_COMPILER"
+          install -d -m 700 "$runtime_dir"
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+      - name: Build native modules and keyboard-only variant
+        run: |
+          cmake -S . -B build/fcitx -DCMAKE_CXX_COMPILER="$CXX"
           cmake --build build/fcitx -j2
+          cmake -S . -B build/keyboard-only -DCMAKE_CXX_COMPILER="$CXX" -DDOUBAO_BUILD_VOICE=OFF
+          cmake --build build/keyboard-only -j2
       - name: Build Windows helpers
         run: python3 scripts/build_windows.py
-      - name: Unit tests and source audit
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Real Fcitx and GTK integration with mock engine
         run: |
-          python3 -m unittest discover -s tests -p 'test_*.py'
+          timeout 120s python3 scripts/headless.py --prefix none -- \
+            dbus-run-session -- python3 tests/integration_fcitx.py --mock-engine
+      - name: Staged installation and removal
+        run: python3 tests/integration_install.py
+      - name: Source archive and reproducibility
+        run: |
           python3 scripts/package.py --check
           python3 scripts/package.py
+          python3 scripts/check_package.py --rebuild
+      - name: Upload reviewed source archive
+        if: matrix.compiler == 'gcc'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-${{ github.sha }}
+          path: |
+            dist/doubao-ime-linux-*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-${{ matrix.compiler }}-${{ github.sha }}
+          path: |
+            work/integration-fcitx.json
+            work/integration-fcitx.log
+            work/install-stage.json
+          if-no-files-found: ignore
+          retention-days: 14
