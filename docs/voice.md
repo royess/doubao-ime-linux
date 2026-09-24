@@ -64,3 +64,10 @@ HoldThresholdMs=250
 默认遵守用户的代理配置。如果出现特定域名握手失败，可自行设置 `asr_no_proxy`，
 例如 `log.snssdk.com,is.snssdk.com,frontier-audio-ime-ws.doubao.com`；此设置只影响适配器子进程。
 不要把携带签名、设备 ID、令牌的日志直接提交到 issue。
+
+`asr_ipv4_only` 默认是 `false`，省略时也不会限制地址族，沿用系统的 IPv4/IPv6 选择。
+若本机到语音入口的 IPv6 不通、IPv4 正常，可在 `config.local.json` 设置
+`"asr_ipv4_only": true`。这只让适配器子进程用 IPv4 连接豆包语音 WebSocket
+域名，避免先等待 IPv6 超时；不会修改系统网络或固定服务器 IP。
+改回 `false` 或删除该项即可恢复默认行为；配置在下一次听写启动适配器时生效。
+松开右 Alt 后请等“已输入”提示再打字，识别完成前打字会取消本次提交。

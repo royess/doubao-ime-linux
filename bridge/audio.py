@@ -1,5 +1,6 @@
 """One bounded recording session. Network and audio never run on the D-Bus loop."""
 import asyncio
+from array import array
 import base64
 from collections import deque
 import json
@@ -65,25 +66,51 @@ class Session:
         diagnostics = []
         queued = deque()
         queued_bytes = 0
+        captured_bytes = 0
+        peak = 0
+        provider_events = []
+        error_category = None
+
+        def classify(message):
+            message = str(message).lower()
+            for category, words in (
+                ('timeout', ('timeout', 'timed out')),
+                ('connection', ('connection', 'websocket', 'handshake')),
+                ('authentication', ('unauthorized', 'forbidden', 'credential', 'token')),
+                ('no-speech', ('no speech', 'empty audio', 'no valid audio')),
+            ):
+                if any(word in message for word in words):
+                    return category
+            return 'upstream-error'
 
         async def output():
+            nonlocal error_category
             async for line in provider.stdout:
                 event = json.loads(line)
+                kind = event.get('type')
+                if kind in ('session_started', 'final', 'final_timestamps', 'closed', 'error'):
+                    if len(provider_events) < 32:
+                        provider_events.append(kind)
+                if kind == 'error':
+                    error_category = classify(event.get('message', ''))
                 result.receive(event)
                 if event.get('type') == 'session_started':
                     ready.set()
 
         async def errors():
+            nonlocal error_category
             async for line in provider.stderr:
                 # Do not relay upstream errors containing credentials or URLs.
                 diagnostics.append(True)
+                if not error_category:
+                    error_category = classify(line.decode(errors='replace'))
 
         async def send(event):
             provider.stdin.write((json.dumps(event)+'\n').encode())
             await asyncio.wait_for(provider.stdin.drain(), 2)
 
         async def feed():
-            nonlocal queued_bytes
+            nonlocal queued_bytes, captured_bytes, peak
             while not self.stop.is_set() and not self.cancel.is_set():
                 chunk = await capture.stdout.read(3200)
                 if not chunk:
@@ -92,6 +119,9 @@ class Session:
                     break
                 queued.append(chunk)
                 queued_bytes += len(chunk)
+                captured_bytes += len(chunk)
+                samples = array('h', chunk[:len(chunk)//2*2])
+                peak = max(peak, max(map(abs, samples), default=0))
                 # At most 20 seconds of 16 kHz mono PCM while connecting.
                 if queued_bytes > 640000:
                     result.error = True
@@ -147,7 +177,9 @@ class Session:
             await asyncio.gather(*readers)
             return {'text': result.accepted(provider.returncode, finished, self.cancel.is_set()),
                     'error': 'provider-or-capture-error' if result.error or provider.returncode else None,
-                    'provider_exit': provider.returncode, 'diagnostic_count': len(diagnostics)}
+                    'provider_exit': provider.returncode, 'diagnostic_count': len(diagnostics),
+                    'audio_seconds': round(captured_bytes / 32000, 2), 'peak': peak,
+                    'provider_events': provider_events, 'error_category': error_category}
         finally:
             await terminate(capture)
             await terminate(provider)

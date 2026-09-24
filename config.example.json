@@ -3,5 +3,6 @@
   "wineserver": "wineserver",
   "xvfb": "Xvfb",
   "mingw_cc": "x86_64-w64-mingw32-gcc",
-  "innoextract": "innoextract"
+  "innoextract": "innoextract",
+  "asr_ipv4_only": false
 }

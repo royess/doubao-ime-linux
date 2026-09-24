@@ -63,6 +63,16 @@ class Coordinator(unittest.TestCase):
         self.assertFalse(any(x[0]=='Commit' for x in self.calls))
         self.assertEqual(self.b.last['outcome'],'focus-out')
 
+    def test_typing_reports_reason_and_rejects_late_result(self):
+        notices=[]
+        self.b.notify=notices.append
+        self.b.invalidated(None,None,None,None,None,
+                           GLib.Variant('(ss)',('token','typing')))
+        self.b.event(4,'done',{'text':'测试'})
+        self.assertEqual(self.b.last['outcome'],'fcitx-invalidated:typing')
+        self.assertTrue(any('识别完成前' in notice for notice in notices))
+        self.assertFalse(any(x[0]=='Commit' for x in self.calls))
+
     def test_old_generation(self):
         self.b.event(3,'done',{'text':'旧结果'})
         self.assertEqual(self.calls,[])

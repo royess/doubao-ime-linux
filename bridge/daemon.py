@@ -63,6 +63,7 @@ class Bridge:
 
     def shortcut(self, connection, sender, path, interface, signal_name, parameters):
         action, context = parameters.unpack()
+        print(json.dumps({'event': 'shortcut', 'action': action, 'phase': self.phase}), flush=True)
         try:
             if action == 'hold-start' and self.phase == 'idle':
                 self.command('start', context)
@@ -103,7 +104,7 @@ class Bridge:
             if self.phase in ('connecting', 'recording'):
                 self.phase, self.since = 'processing', time.monotonic()
                 self.session.stop.set()
-                self.notify('正在识别…')
+                self.notify('正在识别…请勿打字或切换输入框，等待“已输入”提示')
         elif command == 'cancel':
             self.cancel('cancelled')
         else:
@@ -120,13 +121,18 @@ class Bridge:
             except GLib.Error:
                 pass
         self.last = {'generation': self.generation, 'outcome': reason}
+        print(json.dumps({'event': 'cancel', **self.last}), flush=True)
+        if reason == 'fcitx-invalidated:typing':
+            self.notify('听写已取消：识别完成前按了其他键；请等“已输入”后再打字')
+        elif reason.startswith('fcitx-invalidated:') or reason == 'focus-or-key-cancelled':
+            self.notify('听写已取消：输入框状态或焦点发生变化')
         self.phase, self.since = 'cancelling', time.monotonic()
         self.session.cancel.set()
 
     def invalidated(self, connection, sender, path, interface, signal_name, parameters):
         token, reason = parameters.unpack()
         if token == self.token:
-            self.cancel('focus-or-key-cancelled')
+            self.cancel('fcitx-invalidated:' + reason)
 
     def event(self, generation, kind, payload):
         if generation != self.generation or not self.session:
@@ -154,6 +160,10 @@ class Bridge:
             if self.phase != 'cancelling':
                 self.last = {'generation': generation, 'outcome': outcome,
                              'characters': len(text or '') if outcome == 'committed' else 0}
+                self.last.update({key: payload[key] for key in
+                    ('audio_seconds', 'peak', 'provider_events', 'error_category', 'provider_exit')
+                    if key in payload})
+                print(json.dumps({'event': 'done', **self.last}), flush=True)
                 self.notify('已输入' if outcome == 'committed' else '本次未输入文字：'+outcome)
             self.session, self.token, self.phase = None, None, 'idle'
         return False

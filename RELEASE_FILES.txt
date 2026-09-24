@@ -52,5 +52,6 @@ tests/settings_ui_probe.c
 tests/test_audio_buffer.py
 tests/test_install.py
 tests/test_package.py
+tests/test_provider_network.py
 tests/test_settings_merge.py
 tests/test_voice_state.py

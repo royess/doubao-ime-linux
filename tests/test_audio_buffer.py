@@ -60,6 +60,8 @@ class BufferedAudio(unittest.IsolatedAsyncioTestCase):
             self.provider.emit({'type':'session_started'})
             outcome=await asyncio.wait_for(task,2)
         self.assertEqual(outcome['text'],'早开口')
+        self.assertEqual(outcome['audio_seconds'],.1)
+        self.assertEqual(outcome['peak'],513)
         self.assertEqual([e['type'] for e in self.provider.sent],['audio','finish'])
         self.assertEqual(base64.b64decode(self.provider.sent[0]['audio_base64']),self.pcm)
 
@@ -87,6 +89,14 @@ class BufferedAudio(unittest.IsolatedAsyncioTestCase):
         with patch('audio.asyncio.create_subprocess_exec',side_effect=fail):
             with self.assertRaises(FileNotFoundError): await self.session.run()
         self.assertIsNotNone(self.provider.returncode)
+
+    async def test_provider_error_diagnostics_do_not_expose_message(self):
+        self.provider.emit({'type':'error','message':'Connection timed out token=private-secret'})
+        with patch('audio.asyncio.create_subprocess_exec',side_effect=self.spawn):
+            outcome=await asyncio.wait_for(self.session.run(),2)
+        self.assertEqual(outcome['error_category'],'timeout')
+        self.assertEqual(outcome['provider_events'],['error'])
+        self.assertNotIn('private-secret',json.dumps(outcome))
 
 
 if __name__=='__main__': unittest.main()

@@ -2,10 +2,32 @@
 """Run an explicitly configured external adapter; no bundled vendor code."""
 import importlib.util
 import os
+import socket
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bridge'))
 from runtime import STATE, OPTIONS
+
+
+def ipv4_connector(connect, enabled=False):
+    """Optionally restrict the Doubao websocket host in this subprocess."""
+    if not enabled:
+        return connect
+    def create_connection(address, *args, **kwargs):
+        host, port = address
+        if host == 'frontier-audio-ime-ws.doubao.com':
+            addresses = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            last_error = None
+            for _, _, _, _, resolved in addresses:
+                try:
+                    return connect(resolved, *args, **kwargs)
+                except OSError as error:
+                    last_error = error
+            if last_error:
+                raise last_error
+            raise OSError('No IPv4 address for Doubao voice endpoint')
+        return connect(address, *args, **kwargs)
+    return create_connection
 
 
 def main():
@@ -33,6 +55,8 @@ def main():
             raise RuntimeError('Incompatible adapter; use the documented revision')
     module.ensure_healthy_credentials = module.ensure_credentials
     module._invalidate_credentials_after_route_failure = lambda state: None
+    module.socket.create_connection = ipv4_connector(
+        socket.create_connection, enabled=OPTIONS.get('asr_ipv4_only', False))
     return module.main()
 
 
