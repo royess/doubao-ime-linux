@@ -58,7 +58,8 @@ class Session:
 
     async def run(self):
         provider = await asyncio.create_subprocess_exec(sys.executable, str(ROOT/'scripts/provider.py'),
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            limit=512 * 1024)
         capture = None
         feed_task = None
         ready = asyncio.Event()
@@ -70,6 +71,7 @@ class Session:
         peak = 0
         provider_events = []
         error_category = None
+        last_preview = None
 
         def classify(message):
             message = str(message).lower()
@@ -84,7 +86,7 @@ class Session:
             return 'upstream-error'
 
         async def output():
-            nonlocal error_category
+            nonlocal error_category, last_preview
             async for line in provider.stdout:
                 event = json.loads(line)
                 kind = event.get('type')
@@ -94,6 +96,13 @@ class Session:
                 if kind == 'error':
                     error_category = classify(event.get('message', ''))
                 result.receive(event)
+                if kind in ('partial', 'final', 'final_timestamps') and not result.error and not self.cancel.is_set():
+                    text = event.get('text')
+                    if (isinstance(text, str) and len(text.encode()) <= 65536
+                            and not any(ord(char) < 32 or ord(char) == 127 for char in text)
+                            and text != last_preview):
+                        last_preview = text
+                        self.callback('preview', {'text': text})
                 if event.get('type') == 'session_started':
                     ready.set()
 

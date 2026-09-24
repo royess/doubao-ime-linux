@@ -5,6 +5,7 @@
 #include <fcitx/instance.h>
 #include <fcitx-config/iniparser.h>
 #include <fcitx-utils/dbus/objectvtable.h>
+#include <fcitx-utils/dbus/servicewatcher.h>
 #include <fcitx-utils/event.h>
 #include <fcitx-utils/utf8.h>
 #include <dbus_public.h>
@@ -30,9 +31,12 @@ class Dictation final : public fcitx::AddonInstance,
         std::string ticket, sender;
         fcitx::TrackableObjectReference<fcitx::InputContext> field;
         std::chrono::steady_clock::time_point expires;
+        bool preview = false;
     };
     fcitx::Instance *instance;
     std::unique_ptr<Delivery> pending;
+    std::unique_ptr<fcitx::dbus::ServiceWatcher> serviceWatcher;
+    std::unique_ptr<fcitx::dbus::ServiceWatcherEntry> ownerWatch;
     std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>> listeners;
     VoiceConfig config;
     fcitx::TrackableObjectReference<fcitx::InputContext> hotkeyField;
@@ -74,8 +78,9 @@ class Dictation final : public fcitx::AddonInstance,
             auto modifiers = fcitx::KeyStates(fcitx::KeyState::Ctrl) | fcitx::KeyState::Shift |
                              fcitx::KeyState::Super | fcitx::KeyState::Super2;
             if (!eligible(field) || key.rawKey().states().testAny(modifiers) ||
-                !field->inputPanel().clientPreedit().toString().empty() ||
-                !field->inputPanel().preedit().toString().empty()) return false;
+                ((!pending || pending->field.get() != field || !pending->preview) &&
+                 (!field->inputPanel().clientPreedit().toString().empty() ||
+                  !field->inputPanel().preedit().toString().empty()))) return false;
             altDown = true; hotkeyField = field->watch();
             holdTimer = instance->eventLoop().addTimeEvent(CLOCK_MONOTONIC,
                 fcitx::now(CLOCK_MONOTONIC) + *config.holdMs * 1000, 0,
@@ -114,9 +119,26 @@ class Dictation final : public fcitx::AddonInstance,
         return pending && pending->ticket == ticket &&
             pending->sender == currentMessage()->sender();
     }
+    static bool safeText(const std::string &text) {
+        if (text.size() > 65536 || !fcitx::utf8::validate(text)) return false;
+        for (unsigned char byte : text) if (byte < 32 || byte == 127) return false;
+        return true;
+    }
+    void clearPreview(Delivery &delivery) {
+        auto *field = delivery.field.get();
+        if (!delivery.preview || !field) return;
+        delivery.preview = false;
+        field->inputPanel().setClientPreedit(fcitx::Text());
+        field->inputPanel().setPreedit(fcitx::Text());
+        field->updatePreedit();
+        field->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    }
     void revoke(const std::string &reason) {
         auto previous = std::move(pending);
-        if (previous) invalidatedTo(previous->sender, previous->ticket, reason);
+        if (previous) {
+            clearPreview(*previous);
+            invalidatedTo(previous->sender, previous->ticket, reason);
+        }
     }
     void observe(fcitx::Event &event) {
         auto &input = static_cast<fcitx::InputContextEvent &>(event);
@@ -150,6 +172,8 @@ public:
         if (!module || !module->call<fcitx::IDBusModule::bus>()->addObjectVTable(
                 "/org/fcitx/Fcitx5/DoubaoDictation", "org.fcitx.Fcitx5.DoubaoDictation1", *this))
             throw std::runtime_error("Doubao dictation D-Bus endpoint unavailable");
+        serviceWatcher = std::make_unique<fcitx::dbus::ServiceWatcher>(
+            *module->call<fcitx::IDBusModule::bus>());
         for (auto type : {fcitx::EventType::InputContextFocusOut,
                           fcitx::EventType::InputContextDestroyed,
                           fcitx::EventType::InputContextReset,
@@ -179,6 +203,8 @@ public:
         auto *field = instance->mostRecentInputContext();
         if (!eligible(field)) return {};
         revoke("new-dictation");
+        if (!field->inputPanel().clientPreedit().toString().empty() ||
+            !field->inputPanel().preedit().toString().empty()) return {};
         auto delivery = std::make_unique<Delivery>();
         std::array<unsigned char, 24> bytes{};
         if (getrandom(bytes.data(), bytes.size(), 0) != static_cast<ssize_t>(bytes.size()))
@@ -191,6 +217,10 @@ public:
         delivery->field = field->watch();
         delivery->expires = std::chrono::steady_clock::now() + std::chrono::seconds(180);
         pending = std::move(delivery);
+        ownerWatch = serviceWatcher->watchService(pending->sender,
+            [this](const std::string &name, const std::string &, const std::string &owner) {
+                if (owner.empty() && pending && pending->sender == name) revoke("owner-disconnected");
+            });
         return pending->ticket;
     }
     bool valid(const std::string &ticket) const {
@@ -199,14 +229,28 @@ public:
     }
     bool cancel(const std::string &ticket) {
         if (!owned(ticket)) return false;
-        pending.reset();
+        auto delivery = std::move(pending);
+        clearPreview(*delivery);
+        return true;
+    }
+    bool preview(const std::string &ticket, const std::string &text) {
+        if (!valid(ticket) || !safeText(text)) return false;
+        auto *field = pending->field.get();
+        fcitx::Text preedit(text, fcitx::TextFormatFlags(fcitx::TextFormatFlag::Underline) |
+                                  fcitx::TextFormatFlag::DontCommit);
+        preedit.setCursor(text.size());
+        pending->preview = true;
+        field->inputPanel().setClientPreedit(preedit);
+        field->inputPanel().setPreedit(preedit);
+        field->updatePreedit();
+        field->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         return true;
     }
     bool commit(const std::string &ticket, const std::string &text) {
         if (!owned(ticket)) return false;
-        bool accepted = valid(ticket) && !text.empty() && text.size() <= 65536 && fcitx::utf8::validate(text);
-        for (unsigned char byte : text) if (byte < 32 || byte == 127) accepted = false;
+        bool accepted = valid(ticket) && !text.empty() && safeText(text);
         auto delivery = std::move(pending);
+        clearPreview(*delivery);
         if (accepted) delivery->field.get()->commitString(text);
         return accepted;
     }
@@ -214,6 +258,7 @@ public:
     FCITX_OBJECT_VTABLE_METHOD(beginForContext, "BeginForContext", "s", "s");
     FCITX_OBJECT_VTABLE_METHOD(valid, "Valid", "s", "b");
     FCITX_OBJECT_VTABLE_METHOD(cancel, "Cancel", "s", "b");
+    FCITX_OBJECT_VTABLE_METHOD(preview, "Preview", "ss", "b");
     FCITX_OBJECT_VTABLE_METHOD(commit, "Commit", "ss", "b");
     FCITX_OBJECT_VTABLE_SIGNAL(invalidated, "Invalidated", "ss");
     FCITX_OBJECT_VTABLE_SIGNAL(shortcut, "Shortcut", "ss");

@@ -87,6 +87,9 @@ except BaseException:
 window=Gtk.Window(title='Doubao release integration test')
 box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 fields=[Gtk.Entry(),Gtk.Entry(),Gtk.Entry()];fields[2].set_visibility(False)
+preedits=['','','']
+for index,field in enumerate(fields):
+    field.connect('preedit-changed',lambda entry,text,i=index:preedits.__setitem__(i,text))
 for field in fields:box.pack_start(field,True,True,0)
 window.add(box);window.show_all()
 x=C.CDLL('libX11.so.6');xt=C.CDLL('libXtst.so.6')
@@ -147,17 +150,34 @@ def sequence():
     other=Gio.DBusConnection.new_for_address_sync(os.environ['DBUS_SESSION_BUS_ADDRESS'],
         Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT|Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,None,None)
     check('different sender cannot consume ticket',not voice('Commit',token,'错误',connection=other))
+    check('different sender cannot preview',not voice('Preview',token,'错误',connection=other))
+    check('partial preview accepted',voice('Preview',token,'今天下午两点'))
+    yield 100
+    check('preview visible without changing committed text',preedits[0]=='今天下午两点' and fields[0].get_text()=='你好')
+    check('revised preview accepted',voice('Preview',token,'今天下午三点开会。'))
+    yield 100
+    check('preview revisions replace rather than append',preedits[0]=='今天下午三点开会。')
+    check('preview rejects control characters',not voice('Preview',token,'错误\n'))
     check('final text accepted once',voice('Commit',token,'，语音测试'))
     check('repeated final rejected',not voice('Commit',token,'重复'))
     yield 200
     check('text delivered exactly once',fields[0].get_text()=='你好，语音测试')
-    token=voice('Begin');fields[1].grab_focus();yield 200
+    check('final commit clears preview',preedits[0]=='')
+    check('late preview after commit rejected',not voice('Preview',token,'过期'))
+    token=voice('Begin');voice('Preview',token,'不应提交');yield 100
+    fields[1].grab_focus();yield 200
     check('focus change rejects late result',not voice('Commit',token,'错误'))
+    check('focus loss drops preview without committing',preedits[0]=='' and fields[0].get_text()=='你好，语音测试')
+    check('focus loss rejects late preview',not voice('Preview',token,'错误'))
     check('new field unchanged',not fields[1].get_text())
-    token=voice('Begin');key(ord('a'));yield 200
+    token=voice('Begin');voice('Preview',token,'不应提交');yield 100
+    key(ord('a'));yield 200
     check('typing revokes ticket',not voice('Valid',token))
-    token=voice('Begin');key(0xff1b);yield 200
+    check('typing clears preview and preserves typed character',preedits[1]=='' and fields[1].get_text()=='a')
+    token=voice('Begin');voice('Preview',token,'不应提交');yield 100
+    key(0xff1b);yield 200
     check('Escape cancels ticket',not voice('Commit',token,'错误'))
+    check('Escape clears preview without changing text',preedits[1]=='' and fields[1].get_text()=='a')
     fields[2].grab_focus();yield 200
     check('password field cannot start dictation',not voice('Begin'))
     fields[0].grab_focus();yield 200
@@ -165,7 +185,11 @@ def sequence():
     check('invalid result also consumes ticket',not voice('Valid',token))
     token=voice('Begin');check('explicit cancel works',voice('Cancel',token))
     check('cancelled result rejected',not voice('Commit',token,'错误'))
+    token=voice('Begin',connection=other)
+    voice('Preview',token,'断线不应提交',connection=other);yield 100
     other.close_sync(None)
+    yield 200
+    check('owner disconnect clears preview without committing',preedits[0]=='' and fields[0].get_text()=='你好，语音测试')
 
     # Exercise real keys -> native shortcut signal -> coordinator -> GTK commit,
     # substituting only the microphone/cloud session on this private bus.
@@ -176,9 +200,11 @@ def sequence():
             self.callback=callback;self.stop=threading.Event();self.cancel=threading.Event()
         def start(self):
             self.callback('recording',{})
+            self.callback('preview',{'text':'语音预览'})
             def poll():
                 if self.stop.is_set() or self.cancel.is_set():
-                    self.callback('done',{'text':None if self.cancel.is_set() else '语音测试'})
+                    GLib.timeout_add(120,lambda:self.callback('done',
+                        {'text':None if self.cancel.is_set() else '语音测试'}) or False)
                     return False
                 return True
             GLib.timeout_add(20,poll)
@@ -192,11 +218,16 @@ def sequence():
     check('Left Alt does not trigger Doubao',bridge.generation==0)
     edge(alt,True);yield from wait_for(lambda:bridge.phase=='recording','Right Alt recording')
     check('holding Right Alt starts recording',bridge.phase=='recording' and bridge.generation==1)
-    edge(alt,False);yield 300
+    yield 100
+    check('holding Right Alt displays preview before release',preedits[0]=='语音预览' and not fields[0].get_text())
+    edge(alt,False);yield 60
+    check('preview remains while final recognition is pending',bridge.phase=='processing' and preedits[0]=='语音预览' and not fields[0].get_text())
+    yield 240
     check('releasing Right Alt commits once',bridge.phase=='idle' and fields[0].get_text()=='语音测试')
     fields[0].set_text('')
     edge(alt,True);key(space);edge(alt,False);yield 350
     check('Right Alt Space starts hands-free recording',bridge.phase=='recording' and not fields[0].get_text())
+    check('hands-free recording displays preview',preedits[0]=='语音预览')
     edge(alt,True);key(space);edge(alt,False);yield 300
     check('Right Alt Space stops without inserting a space',bridge.phase=='idle' and fields[0].get_text()=='语音测试')
     fields[0].set_text('')

@@ -74,9 +74,35 @@ class Coordinator(unittest.TestCase):
         self.assertFalse(any(x[0]=='Commit' for x in self.calls))
 
     def test_old_generation(self):
+        self.b.event(3,'preview',{'text':'旧预览'})
         self.b.event(3,'done',{'text':'旧结果'})
         self.assertEqual(self.calls,[])
         self.assertIsNotNone(self.b.session)
+
+    def test_preview_during_recording_and_processing_never_commits(self):
+        self.b.phase='recording'
+        self.b.event(4,'preview',{'text':'初步'})
+        self.b.phase='processing'
+        self.b.event(4,'preview',{'text':'修订'})
+        self.assertEqual(self.calls,[('Preview','token','初步'),('Preview','token','修订')])
+
+    def test_cancel_discards_late_preview(self):
+        self.b.cancel('cancelled')
+        self.calls.clear()
+        self.b.event(4,'preview',{'text':'过期'})
+        self.assertEqual(self.calls,[])
+
+    def test_rejected_preview_cancels_recording(self):
+        self.b.fcitx=lambda *args: self.calls.append(args) or False
+        self.b.event(4,'preview',{'text':'过期'})
+        self.assertTrue(self.b.session.cancel.is_set())
+        self.assertEqual(self.b.last['outcome'],'preview-rejected')
+
+    def test_error_after_preview_clears_ticket_without_commit(self):
+        self.b.event(4,'preview',{'text':'未确认'})
+        self.b.event(4,'done',{'error':'provider-or-capture-error','text':None})
+        self.assertEqual(self.calls,[('Preview','token','未确认'),('Cancel','token')])
+        self.assertEqual(self.b.phase,'idle')
 
     def test_recording_result_does_not_commit_without_stop(self):
         self.b.phase='recording'

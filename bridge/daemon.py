@@ -137,7 +137,13 @@ class Bridge:
     def event(self, generation, kind, payload):
         if generation != self.generation or not self.session:
             return False
-        if kind == 'recording' and self.phase == 'connecting':
+        if kind == 'preview' and self.phase in ('connecting', 'recording', 'processing') and self.token:
+            try:
+                if not self.fcitx('Preview', self.token, payload['text']):
+                    self.cancel('preview-rejected')
+            except GLib.Error:
+                self.cancel('fcitx-unavailable')
+        elif kind == 'recording' and self.phase == 'connecting':
             self.phase, self.since = 'recording', time.monotonic()
             self.notify('可以说话了；松开右 Alt 或再按右 Alt + 空格结束，Esc 取消'
                         if self.hold_generation == generation else

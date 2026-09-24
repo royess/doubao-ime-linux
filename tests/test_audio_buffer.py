@@ -13,7 +13,7 @@ from audio import Session
 
 class Process:
     def __init__(self):
-        self.stdout=asyncio.StreamReader();self.stderr=asyncio.StreamReader()
+        self.stdout=asyncio.StreamReader(limit=512*1024);self.stderr=asyncio.StreamReader()
         self.stdin=self;self.returncode=None;self.sent=[];self.done=asyncio.Event()
 
     def emit(self,event):
@@ -97,6 +97,27 @@ class BufferedAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome['error_category'],'timeout')
         self.assertEqual(outcome['provider_events'],['error'])
         self.assertNotIn('private-secret',json.dumps(outcome))
+
+    async def test_streaming_revisions_preview_without_promoting_partial_to_final(self):
+        events=[]
+        self.session.callback=lambda kind,payload: events.append((kind,payload))
+        for text in ('初步','初步','修订','', '下一句','错误\n','x'*65537):
+            self.provider.emit({'type':'partial','text':text})
+        self.provider.emit({'type':'closed'})
+        self.provider.close(0)
+        with patch('audio.asyncio.create_subprocess_exec',side_effect=self.spawn):
+            outcome=await self.session.run()
+        self.assertEqual([p['text'] for k,p in events if k=='preview'],['初步','修订','','下一句'])
+        self.assertIsNone(outcome['text'])
+
+    async def test_cancellation_suppresses_queued_preview(self):
+        events=[]
+        self.session.callback=lambda kind,payload: events.append((kind,payload))
+        self.session.cancel.set()
+        self.provider.emit({'type':'partial','text':'过期'})
+        with patch('audio.asyncio.create_subprocess_exec',side_effect=self.spawn):
+            await self.session.run()
+        self.assertFalse(any(k=='preview' for k,p in events))
 
 
 if __name__=='__main__': unittest.main()
